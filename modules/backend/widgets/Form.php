@@ -336,9 +336,14 @@ class Form extends WidgetBase
         }
 
         /*
-         * Fill the model as if it were to be saved
+         * Fill the model as if it were to be saved. A nested form that brings a data
+         * scope of its own - a repeater item, a nested form - holds fields that are not
+         * the model's attributes, so filling the model from there writes foreign values
+         * onto it.
          */
-        $this->prepareModelsToSave($this->model, $data);
+        if (!$this->isNested || $this->sharesModelScope) {
+            $this->prepareModelsToSave($this->model, $data);
+        }
 
         /*
          * Data set differs from model
