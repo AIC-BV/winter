@@ -4,6 +4,7 @@ use Lang;
 use ApplicationException;
 use Backend\Classes\FormWidgetBase;
 use Winter\Storm\Database\Model;
+use Winter\Storm\Html\Helper as HtmlHelper;
 
 /**
  * Record Finder
@@ -285,7 +286,7 @@ class RecordFinder extends FormWidgetBase
             return null;
         }
 
-        return $this->relationModel->{$this->nameFrom};
+        return $this->getRelationModelValue($this->nameFrom);
     }
 
     public function getDescriptionValue()
@@ -294,12 +295,16 @@ class RecordFinder extends FormWidgetBase
             return null;
         }
 
-        // Convert array-like notation to dot notation
-        if (preg_match('/\[(.*?)\]/', $this->relationModel, $matches)) {
-            $this->descriptionFrom = str_replace(['[', ']'], ['.', ''], $this->descriptionFrom);
-        }
+        return $this->getRelationModelValue($this->descriptionFrom);
+    }
 
-        return data_get($this->relationModel, $this->descriptionFrom);
+    /**
+     * Resolves an attribute of the selected record, including nested values
+     * in dot (`data.name`) or array (`data[name]`) notation.
+     */
+    protected function getRelationModelValue(string $attribute)
+    {
+        return data_get($this->relationModel, implode('.', HtmlHelper::nameToArray($attribute)));
     }
 
     public function onFindRecord()
