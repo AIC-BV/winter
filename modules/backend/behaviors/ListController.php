@@ -1,10 +1,12 @@
-<?php namespace Backend\Behaviors;
+<?php
 
-use Lang;
-use Event;
-use Flash;
-use ApplicationException;
+namespace Backend\Behaviors;
+
 use Backend\Classes\ControllerBehavior;
+use Illuminate\Support\Facades\Lang;
+use Winter\Storm\Exception\ApplicationException;
+use Winter\Storm\Support\Facades\Event;
+use Winter\Storm\Support\Facades\Flash;
 
 /**
  * Adds features for working with backend lists.
@@ -151,6 +153,7 @@ class ListController extends ControllerBehavior
             'showTree',
             'treeExpanded',
             'customViewPath',
+            'sortable',
         ];
 
         foreach ($configFieldsToTransfer as $field) {
@@ -163,6 +166,42 @@ class ListController extends ControllerBehavior
          * List Widget with extensibility
          */
         $widget = $this->makeWidget(\Backend\Widgets\Lists::class, $columnConfig);
+
+        /*
+         * Drag-and-drop reordering - requires the model to use the Sortable trait.
+         */
+        if (!empty($listConfig->sortable)) {
+            if (!in_array(\Winter\Storm\Database\Traits\Sortable::class, class_uses_recursive($model))) {
+                throw new ApplicationException(sprintf(
+                    'To use "sortable" on a list, the model "%s" must use the %s trait.',
+                    get_class($model),
+                    \Winter\Storm\Database\Traits\Sortable::class
+                ));
+            }
+
+            /*
+             * Drag-and-drop reordering presents every record in a single fixed order, so it
+             * cannot coexist with features that show a partial or re-ordered view. Reject those
+             * combinations up front rather than silently producing a wrong order.
+             */
+            $toolbar = $listConfig->toolbar ?? null;
+            $conflicts = array_keys(array_filter([
+                'toolbar search' => is_array($toolbar) && !empty($toolbar['search']),
+                'filter'         => $listConfig->filter ?? null,
+                'recordsPerPage' => $listConfig->recordsPerPage ?? null,
+                'defaultSort'    => $listConfig->defaultSort ?? null,
+            ]));
+            if ($conflicts) {
+                throw new ApplicationException(sprintf(
+                    'A "sortable" list cannot also use: %s. Drag-and-drop reordering requires the whole list in a fixed order. Remove these options, or use the ReorderController for a dedicated reordering page.',
+                    implode(', ', $conflicts)
+                ));
+            }
+
+            $widget->bindEvent('list.reorder', function ($ids, $orders) use ($model) {
+                $model->setSortableOrder($ids, $orders);
+            });
+        }
 
         $widget->bindEvent('list.extendColumnsBefore', function () use ($widget) {
             $this->controller->listExtendColumnsBefore($widget);
@@ -235,39 +274,37 @@ class ListController extends ControllerBehavior
         if (isset($listConfig->filter)) {
             $filterConfig = $this->makeConfig($listConfig->filter);
 
-            if (!empty($filterConfig->scopes)) {
-                $widget->cssClasses[] = 'list-flush';
+            $widget->cssClasses[] = 'list-flush';
 
-                $filterConfig->alias = $widget->alias . 'Filter';
-                $filterWidget = $this->makeWidget(\Backend\Widgets\Filter::class, $filterConfig);
-                $filterWidget->bindToController();
+            $filterConfig->alias = $widget->alias . 'Filter';
+            $filterWidget = $this->makeWidget(\Backend\Widgets\Filter::class, $filterConfig);
+            $filterWidget->bindToController();
 
-                /*
-                * Filter the list when the scopes are changed
-                */
-                $filterWidget->bindEvent('filter.update', function () use ($widget, $filterWidget) {
-                    return $widget->onFilter();
-                });
+            /*
+            * Filter the list when the scopes are changed
+            */
+            $filterWidget->bindEvent('filter.update', function () use ($widget, $filterWidget) {
+                return $widget->onFilter();
+            });
 
-                /*
-                * Filter Widget with extensibility
-                */
-                $filterWidget->bindEvent('filter.extendScopes', function () use ($filterWidget) {
-                    $this->controller->listFilterExtendScopes($filterWidget);
-                });
+            /*
+            * Filter Widget with extensibility
+            */
+            $filterWidget->bindEvent('filter.extendScopes', function () use ($filterWidget) {
+                $this->controller->listFilterExtendScopes($filterWidget);
+            });
 
-                /*
-                * Extend the query of the list of options
-                */
-                $filterWidget->bindEvent('filter.extendQuery', function ($query, $scope) {
-                    $this->controller->listFilterExtendQuery($query, $scope);
-                });
+            /*
+            * Extend the query of the list of options
+            */
+            $filterWidget->bindEvent('filter.extendQuery', function ($query, $scope) {
+                $this->controller->listFilterExtendQuery($query, $scope);
+            });
 
-                // Apply predefined filter values
-                $widget->addFilter([$filterWidget, 'applyAllScopesToQuery']);
+            // Apply predefined filter values
+            $widget->addFilter([$filterWidget, 'applyAllScopesToQuery']);
 
-                $this->filterWidgets[$definition] = $filterWidget;
-            }
+            $this->filterWidgets[$definition] = $filterWidget;
         }
 
         return $widget;
@@ -422,7 +459,7 @@ class ListController extends ControllerBehavior
      *
      * @return array The list element selector as the key, and the list contents are the value.
      */
-    public function listRefresh(string $definition = null)
+    public function listRefresh(?string $definition = null)
     {
         if (!count($this->listWidgets)) {
             $this->makeLists();
@@ -439,7 +476,7 @@ class ListController extends ControllerBehavior
      * Returns the widget used by this behavior.
      * @return \Backend\Classes\WidgetBase
      */
-    public function listGetWidget(string $definition = null)
+    public function listGetWidget(?string $definition = null)
     {
         if (!$definition) {
             $definition = $this->primaryDefinition;
@@ -452,7 +489,7 @@ class ListController extends ControllerBehavior
      * Returns the configuration used by this behavior.
      * @return stdClass
      */
-    public function listGetConfig(string $definition = null)
+    public function listGetConfig(?string $definition = null)
     {
         if (!$definition) {
             $definition = $this->primaryDefinition;

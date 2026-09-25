@@ -186,8 +186,8 @@ body.fancy-layout .master-tabs.control-tabs,
 }
 
 // Primary Tabs
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs.primary-tabs,
-*:not(.nested-form) > .form-widget > .layout-row > .control-tabs.fancy-layout.primary-tabs {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs.primary-tabs,
+*:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs.fancy-layout.primary-tabs {
     &.master-area {
         > div > ul.nav-tabs {
             .transition(background-color 0.5s);
@@ -286,7 +286,7 @@ body.fancy-layout .master-tabs.control-tabs,
 }
 
 // Secondary tabs
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs.secondary-tabs {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs.secondary-tabs {
     // Target horizontal scroll indicators
     &:before {
         left: 5px;
@@ -438,12 +438,12 @@ body.fancy-layout .master-tabs.control-tabs,
         }
 
         .tab-collapse-icon.primary {
-            color: #808c8d;
+            color: #000000;
         }
 
         &.primary-collapsed {
             .tab-collapse-icon.primary {
-                color: white;
+                color: @color-fancy-master-tabs-active-text;
             }
 
             > div > ul.nav-tabs {
@@ -484,7 +484,7 @@ body.fancy-layout .master-tabs.control-tabs,
 }
 
 // Tabless (outside) fields
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .form-tabless-fields {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .form-tabless-fields {
     .clearfix();
     position: relative;
     background: @color-fancy-form-tabless-fields-bg;
@@ -495,6 +495,10 @@ body.fancy-layout .master-tabs.control-tabs,
         text-transform: uppercase;
         color: @color-fancy-form-label;
         margin-bottom: 0;
+    }
+
+    .form-control[disabled] {
+        background-color: rgba(29, 29, 29, 0.11) !important;
     }
 
     input[type=text] {
@@ -635,14 +639,46 @@ body.breadcrumb-fancy .control-breadcrumb,
             }
         }
     }
+
+    // Record navigation (controls/record-navigation.less) sits in this breadcrumb.
+    // Its default colours are tuned for the light regular-layout breadcrumb; on the
+    // dark fancy breadcrumb they read as low-contrast, so switch to light-on-dark.
+    .form-record-nav {
+        .form-record-nav-position {
+            color: rgba(255, 255, 255, .8);
+        }
+
+        .form-record-nav-group {
+            background: rgba(255, 255, 255, .15);
+            border-color: rgba(255, 255, 255, .25);
+            box-shadow: none;
+        }
+
+        .form-record-nav-btn {
+            color: rgba(255, 255, 255, .8);
+
+            & + .form-record-nav-btn {
+                border-left-color: rgba(255, 255, 255, .25);
+            }
+
+            &:not(.is-disabled):hover {
+                background-color: rgba(255, 255, 255, .28);
+                color: #fff;
+            }
+
+            &.is-disabled {
+                color: rgba(255, 255, 255, .35);
+            }
+        }
+    }
 }
 
 //
 // --- FORM BUTTONS
 //
 
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs .form-buttons:not(.normalized),
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .form-tabless-fields  .form-buttons:not(.normalized) {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs .form-buttons:not(.normalized),
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .form-tabless-fields  .form-buttons:not(.normalized) {
     .transition(all 0.5s);
     padding-top: 14px;
     padding-bottom: 5px;
@@ -668,6 +704,41 @@ body.breadcrumb-fancy .control-breadcrumb,
             margin-right: 0;
         }
 
+        // Delete: a destructive action kept inline with the save/cancel group so it
+        // stays discoverable, but coloured as a danger action. The core fancy toolbar
+        // renders it icon-only; surface its title as a visible "Delete" label so it's
+        // easy to find. The confirmation dialog guards against accidental clicks.
+        &[data-control="delete-button"] {
+            float: right;
+            // The other fancy buttons are text-only with margin-top:-6px; this padded
+            // button is taller, so pull it up to keep its centre aligned with theirs.
+            margin: -9px 0 0 0;
+            padding: 5px 11px;
+            border-radius: 4px;
+            // Solid deep brick, clearly darker than the teal toolbar so the pill
+            // separates by value first (a brighter or semi-transparent red sits at
+            // the teal's lightness and either vibrates or muddies to grey).
+            background-color: #a5382c;
+            color: #fff;
+            opacity: 1;
+            line-height: 1;
+
+            &:before {
+                opacity: 1;
+            }
+
+            &:after {
+                content: attr(title);
+                margin-left: 6px;
+            }
+
+            &:hover {
+                background-color: #bc4436;
+                color: #fff;
+                opacity: 1;
+            }
+        }
+
         &[class^="wn-icon-"],
         &[class*=" wn-icon-"],
         &[class^="oc-icon-"],
@@ -679,7 +750,7 @@ body.breadcrumb-fancy .control-breadcrumb,
     }
 }
 
-.fancy-layout form[class$="-data-changed"] *:not(.nested-form) > .form-widget > .layout-row > .control-tabs .btn.save {
+.fancy-layout form[class$="-data-changed"] *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs .btn.save {
     .opacity(1);
 }
 
@@ -688,7 +759,7 @@ body.breadcrumb-fancy .control-breadcrumb,
 //
 
 // Code editor
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-codeeditor {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-codeeditor {
     border: none !important;
     .border-radius(0);
 
@@ -698,7 +769,7 @@ body.breadcrumb-fancy .control-breadcrumb,
 }
 
 // Rich editor
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-richeditor {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-richeditor {
     border: none;
     border-left: 1px solid @color-form-field-border !important;
 
@@ -709,20 +780,20 @@ body.breadcrumb-fancy .control-breadcrumb,
 }
 
 // Rich editor in a secondary content tab
-.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs.secondary-content-tabs > .tab-content > .tab-pane > .form-group >  .field-richeditor {
+.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs.secondary-content-tabs > .tab-content > .tab-pane > .form-group >  .field-richeditor {
     .fr-toolbar {
         background: white;
     }
 }
 
 // Rich editor when the side panel is not fixed
-body.side-panel-not-fixed .fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-richeditor,
-body.side-panel-not-fixed.fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-richeditor {
+body.side-panel-not-fixed .fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-richeditor,
+body.side-panel-not-fixed.fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .control-tabs > .tab-content > .tab-pane > .form-group > .field-richeditor {
     border-left: none;
 }
 
 // Loading indicator
-html.cssanimations .fancy-layout *:not(.nested-form) > .form-widget > .layout-row > .form-tabless-fields .loading-indicator-container .loading-indicator > span {
+html.cssanimations .fancy-layout *:not(.nested-form):not(.modal-body) > .form-widget > .layout-row > .form-tabless-fields .loading-indicator-container .loading-indicator > span {
     .animation(spin 1s linear infinite);
     background-image: url('../../../system/assets/ui/images/loader-white.svg');
     background-size: 20px 20px;

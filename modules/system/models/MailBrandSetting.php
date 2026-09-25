@@ -7,6 +7,7 @@ use Cache;
 use Less_Parser;
 use Exception;
 use File as FileHelper;
+use Winter\Storm\Parse\Assetic\Filter\LessImportResolver;
 
 /**
  * Mail brand settings
@@ -43,13 +44,13 @@ class MailBrandSetting extends Model
 
     const WHITE_COLOR = '#fff';
     const BODY_BG = '#f5f8fa';
-    const PRIMARY_BG = '#3498db';
-    const POSITIVE_BG = '#31ac5f';
-    const NEGATIVE_BG = '#ab2a1c';
+    const PRIMARY_BG = '#d66829';
+    const POSITIVE_BG = '#52a838';
+    const NEGATIVE_BG = '#e01346';
     const HEADER_COLOR = '#bbbfc3';
     const HEADING_COLOR = '#2f3133';
     const TEXT_COLOR = '#74787e';
-    const LINK_COLOR = '#0181b9';
+    const LINK_COLOR = '#2da7c7';
     const FOOTER_COLOR = '#aeaeae';
     const BORDER_COLOR = '#edeff2';
     const PROMOTION_BORDER_COLOR = '#9ba2ab';
@@ -98,7 +99,7 @@ class MailBrandSetting extends Model
             Cache::forever($cacheKey, $customCss);
         }
         catch (Exception $ex) {
-            $customCss = '/* ' . $ex->getMessage() . ' */';
+            $customCss = '/* ' . e($ex->getMessage()) . ' */';
         }
 
         return $customCss;
@@ -149,6 +150,24 @@ class MailBrandSetting extends Model
     public static function compileCss()
     {
         $parser = new Less_Parser(['compress' => true]);
+
+        // Refuse every @import directive. The bundled custom.less ships no imports
+        // and the only user-controlled input here is CSS variable values via
+        // ModifyVars below — those values are concatenated into the LESS source
+        // by Less_Parser::serializeVars() with no escaping, so a malicious value
+        // like `red; @import (inline) "/etc/passwd"` would otherwise reach the
+        // parser as a real @import directive. See GHSA-58fp-mcx6-7qf9.
+        //
+        // Note: unlike BrandSetting/EditorSetting, this model deliberately does
+        // not strip_tags() its renderCss() output. User input flows in only via
+        // ModifyVars (CSS variable values), not as a raw CSS string, and the
+        // output is consumed by the mail rendering pipeline rather than rendered
+        // inline on a backend page — so the threat model strip_tags() guards
+        // against does not apply here. The @import injection vector that
+        // ModifyVars opens up is closed structurally by the SetImportDirs
+        // deny-all gate, not by strip_tags.
+        $parser->SetImportDirs(['' => LessImportResolver::makeResolver([], null)]);
+
         $basePath = base_path('modules/system/models/mailbrandsetting');
 
         $parser->ModifyVars(static::makeCssVars());

@@ -1,23 +1,27 @@
-<?php namespace Backend\Widgets;
+<?php
 
-use Db;
-use Str;
-use Html;
-use Lang;
-use Backend;
-use DbDongle;
-use Carbon\Carbon;
-use Winter\Storm\Html\Helper as HtmlHelper;
-use Winter\Storm\Router\Helper as RouterHelper;
-use System\Helpers\DateTime as DateTimeHelper;
-use System\Classes\PluginManager;
-use System\Classes\MediaLibrary;
-use System\Classes\ImageResizer;
+namespace Backend\Widgets;
+
 use Backend\Classes\ListColumn;
 use Backend\Classes\WidgetBase;
+use Backend\Facades\Backend;
+use Backend\Facades\BackendAuth;
+use Backend\Traits\PreferenceMaker;
+use Carbon\Carbon;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Lang;
+use System\Classes\ImageResizer;
+use System\Classes\MediaLibrary;
+use System\Classes\PluginManager;
+use System\Helpers\DateTime as DateTimeHelper;
 use Winter\Storm\Database\Model;
-use ApplicationException;
-use BackendAuth;
+use Winter\Storm\Exception\ApplicationException;
+use Winter\Storm\Html\Helper as HtmlHelper;
+use Winter\Storm\Router\Helper as RouterHelper;
+use Winter\Storm\Support\Facades\DB;
+use Winter\Storm\Support\Facades\DbDongle;
+use Winter\Storm\Support\Facades\Html;
+use Winter\Storm\Support\Str;
 
 /**
  * List Widget
@@ -28,7 +32,7 @@ use BackendAuth;
  */
 class Lists extends WidgetBase
 {
-    use Backend\Traits\PreferenceMaker;
+    use PreferenceMaker;
 
     //
     // Configurable properties
@@ -100,6 +104,13 @@ class Lists extends WidgetBase
     public $treeExpanded = false;
 
     /**
+     * @var bool Enable drag-and-drop reordering of records. Requires the model to use the
+     * Sortable trait (model lists) or HasSortableRelations (relation lists). When enabled,
+     * column header sorting and pagination are disabled and a drag handle column is shown.
+     */
+    public $sortable = false;
+
+    /**
      * @var bool|string Display pagination when limiting records per page.
      */
     public $showPagination = 'auto';
@@ -108,6 +119,11 @@ class Lists extends WidgetBase
      * @var bool Display page numbers with pagination, disable to improve performance.
      */
     public $showPageNumbers = true;
+
+    /**
+     * @var bool Display totals for number columns
+     */
+    public $showTotals = true;
 
     /**
      * @var string Specify a custom view path to override partials used by the list.
@@ -204,6 +220,7 @@ class Lists extends WidgetBase
             'recordOnClick',
             'noRecordsMessage',
             'showPageNumbers',
+            'showTotals',
             'recordsPerPage',
             'perPageOptions',
             'showSorting',
@@ -214,6 +231,7 @@ class Lists extends WidgetBase
             'treeExpanded',
             'showPagination',
             'customViewPath',
+            'sortable',
         ]);
 
         /*
@@ -227,8 +245,17 @@ class Lists extends WidgetBase
             $this->showPagination = $this->recordsPerPage && $this->recordsPerPage > 0;
         }
 
+        /*
+         * Drag-and-drop reordering shows every record in its stored order. Disable column
+         * header sorting and pagination so the model/relation order is always presented.
+         */
+        if ($this->sortable) {
+            $this->showSorting = false;
+            $this->showPagination = false;
+        }
+
         if ($this->customViewPath) {
-            $this->addViewPath($this->customViewPath);
+            $this->prependViewPath($this->customViewPath);
         }
 
         $this->validateModel();
@@ -241,6 +268,12 @@ class Lists extends WidgetBase
     protected function loadAssets()
     {
         $this->addJs('js/winter.list.js', 'core');
+
+        // loadAssets() runs before init()/fillFromConfig(), so read the raw config value.
+        if ($this->getConfig('sortable', false)) {
+            $this->addJs('js/dist/winter.list.sortable.js', 'core');
+            $this->addCss('css/winter.list.sortable.css', 'core');
+        }
     }
 
     /**
@@ -258,9 +291,9 @@ class Lists extends WidgetBase
     public function prepareVars()
     {
         $this->vars['cssClasses'] = implode(' ', $this->cssClasses);
-        $this->vars['columns'] = $this->getVisibleColumns();
+        $this->vars['columns'] = $columns = $this->getVisibleColumns();
         $this->vars['columnTotal'] = $this->getTotalColumns();
-        $this->vars['records'] = $this->getRecords();
+        $this->vars['records'] = $records = $this->getRecords();
         $this->vars['noRecordsMessage'] = trans($this->noRecordsMessage);
         $this->vars['showCheckboxes'] = $this->showCheckboxes;
         $this->vars['showSetup'] = $this->showSetup;
@@ -271,26 +304,73 @@ class Lists extends WidgetBase
         $this->vars['sortDirection'] = $this->sortDirection;
         $this->vars['showTree'] = $this->showTree;
         $this->vars['treeLevel'] = 0;
+        $this->vars['sortable'] = $this->sortable;
+        $this->vars['reorderHandler'] = $this->sortable ? $this->getEventHandler('onReorder') : null;
 
         if ($this->showPagination) {
-            $this->vars['pageCurrent'] = $this->records->currentPage();
+            $this->vars['pageCurrent'] = $records->currentPage();
             // Store the currently visited page number in the session so the same
             // data can be displayed when the user returns to this list.
             $this->putSession('lastVisitedPage', $this->vars['pageCurrent']);
             if ($this->showPageNumbers) {
-                $this->vars['recordTotal'] = $this->records->total();
-                $this->vars['pageLast'] = $this->records->lastPage();
-                $this->vars['pageFrom'] = $this->records->firstItem();
-                $this->vars['pageTo'] = $this->records->lastItem();
+                $this->vars['recordTotal'] = $records->total();
+                $this->vars['pageLast'] = $records->lastPage();
+                $this->vars['pageFrom'] = $records->firstItem();
+                $this->vars['pageTo'] = $records->lastItem();
+            } else {
+                $this->vars['hasMorePages'] = $records->hasMorePages();
             }
-            else {
-                $this->vars['hasMorePages'] = $this->records->hasMorePages();
-            }
-        }
-        else {
-            $this->vars['recordTotal'] = $this->records->count();
+        } else {
+            $this->vars['recordTotal'] = $records->count();
             $this->vars['pageCurrent'] = 1;
         }
+
+        // Disable showTotals if there are no records to display
+        if (!$records->count()) {
+            $this->showTotals = false;
+        }
+
+        // Initialize sums arrays
+        if ($this->showTotals) {
+            $sums = [];
+            $formats = [];
+            $queryTotals = $this->calculateTotalSums($columns);
+            // Initialize sums to zero for numeric columns
+            foreach ($columns as $column) {
+                if ($column->type === 'number' && $column->summable) {
+                    $sums[$column->columnName] = 0;
+                    $formats[$column->columnName] = $column->format ?? null;
+                }
+            }
+
+            if (empty($sums)) {
+                $this->showTotals = false;
+            } else {
+                // Calculate sums for the current page
+                foreach ($records as $record) {
+                    foreach ($columns as $column) {
+                        if ($column->type === 'number' && $column->summable) {
+                            $value = $this->getColumnValueRaw($record, $column);
+                            if (is_numeric($value)) {
+                                $sums[$column->columnName] += $value;
+                            }
+                        }
+                    }
+                }
+
+                // Process the column values
+                $this->vars['sums'] = collect($sums)->mapWithKeys(function ($sum, $columnName) use ($queryTotals, $formats) {
+                    return [
+                        $columnName => [
+                            'sum' => $sum,
+                            'total' => $queryTotals[$columnName] ?? null,
+                            'format' => $formats[$columnName] ?? null,
+                        ],
+                    ];
+                })->toArray();
+            }
+        }
+        $this->vars['showTotals'] = $this->showTotals;
     }
 
     /**
@@ -300,6 +380,57 @@ class Lists extends WidgetBase
     {
         $this->prepareVars();
         return ['#'.$this->getId() => $this->makePartial('list')];
+    }
+
+    /**
+     * Event handler for drag-and-drop reordering of records.
+     *
+     * Receives the record ids in their new order and validates that all ids are within the
+     * current query scope, then fires the `list.reorder` event with sequential 1..N sort
+     * order values (assigned server-side by position) for behaviors to persist.
+     */
+    public function onReorder()
+    {
+        if (!$this->sortable) {
+            throw new ApplicationException('Reordering is not enabled for this list.');
+        }
+
+        $ids = post('record_ids');
+
+        if (!is_array($ids) || !count($ids)) {
+            return;
+        }
+
+        /*
+         * Security: only permit reordering records that are visible within the current
+         * query scope. This prevents a crafted request from reordering arbitrary records.
+         */
+        $allowed = array_flip(array_map('strval', $this->prepareQuery()->pluck($this->model->getQualifiedKeyName())->all()));
+        foreach ($ids as $id) {
+            if (!isset($allowed[(string) $id])) {
+                throw new ApplicationException('One or more records are not available for reordering.');
+            }
+        }
+
+        /*
+         * Sort orders are assigned server-side by position; the list always reorders
+         * positionally, so we never trust client-supplied order values.
+         */
+        $orders = range(1, count($ids));
+
+        /**
+         * @event backend.list.reorder
+         * Called when records are reordered via drag-and-drop. Receives the record ids in
+         * their new order and the sort order values to assign to each.
+         *
+         *     $listWidget->bindEvent('list.reorder', function ($ids, $orders) {
+         *         $model->setSortableOrder($ids, $orders);
+         *     });
+         *
+         */
+        $this->fireSystemEvent('backend.list.reorder', [$ids, $orders]);
+
+        return $this->onRefresh();
     }
 
     /**
@@ -390,8 +521,6 @@ class Lists extends WidgetBase
          */
         $primarySearchable = [];
         $relationSearchable = [];
-
-        $columnsToSearch = [];
         if (
             strlen($this->searchTerm) !== 0
             && trim($this->searchTerm) !== ''
@@ -415,7 +544,7 @@ class Lists extends WidgetBase
                 else {
                     $columnName = isset($column->sqlSelect)
                         ? DbDongle::raw($this->parseTableName($column->sqlSelect, $primaryTable))
-                        : DbDongle::cast(Db::getTablePrefix() . $primaryTable . '.' . $column->columnName, 'TEXT');
+                        : DbDongle::cast(DB::getTablePrefix() . $primaryTable . '.' . $column->columnName, 'TEXT');
 
                     $primarySearchable[] = $columnName;
                 }
@@ -528,7 +657,7 @@ class Lists extends WidgetBase
 
                 $joinSql = $joinQuery->toSql();
 
-                $selects[] = Db::raw("(".$joinSql.") as ".$alias);
+                $selects[] = DB::raw("(" . $joinSql . ") as " . $alias);
 
                 /*
                  * If this is a polymorphic relation there will be bindings that need to be added to the query
@@ -602,6 +731,64 @@ class Lists extends WidgetBase
         }
 
         return $query;
+    }
+
+    /**
+     * Calculate the totals for the summable columns
+     */
+    protected function calculateTotalSums(array $columns): array
+    {
+        $sums = [];
+
+        $query = $this->prepareQuery();
+
+        // Build an array of numeric columns to sum
+        $sumColumns = [];
+        foreach ($columns as $column) {
+            if ($column->type === 'number' && $column->summable) {
+                $columnName = $column->columnName;
+                $sumColumns[$columnName] = $column;
+                $sums[$columnName] = 0;
+            }
+        }
+
+        if (empty($sums)) {
+            return [];
+        }
+
+        // Modify the query to select the sums
+        $query->getQuery()->columns = [];
+
+        foreach ($sumColumns as $alias => $column) {
+            // Handle columns with custom select
+            if (isset($column->sqlSelect)) {
+                $sqlSelect = $column->sqlSelect;
+                $sumExpression = "SUM({$sqlSelect}) as {$alias}";
+                $query->addSelect(DB::raw($sumExpression));
+            } else {
+                $columnName = $column->columnName;
+                $sumExpression = "SUM({$columnName}) as {$alias}";
+                $query->addSelect(DB::raw($sumExpression));
+            }
+        }
+
+        // Remove any ordering to optimize performance
+        $query->getQuery()->orders = null;
+
+        // Get the sums
+        try {
+            $result = $query->first();
+        } catch (QueryException $ex) {
+            traceLog("Lists widget: showTotals query totals disabled due to SQL error", $ex);
+            return [];
+        }
+
+        // Assign the sums to the $sums array
+        foreach ($sumColumns as $alias => $column) {
+            $sums[$alias] = $result->$alias ?? 0;
+        }
+
+        return $sums;
     }
 
     public function prepareModel()
@@ -701,7 +888,13 @@ class Lists extends WidgetBase
         }
 
         $url = RouterHelper::replaceParameters($record, $this->recordUrl);
-        return Backend::url($url);
+
+        // Allow external or relative URLs
+        if (!Str::startsWith($url, ['http', '/'])) {
+            $url = Backend::url($url);
+        }
+
+        return $url;
     }
 
     /**
@@ -920,6 +1113,18 @@ class Lists extends WidgetBase
             $this->allColumns = array_merge($orderedDefinitions, $this->allColumns);
         }
 
+        /*
+         * When drag-and-drop reordering is enabled, disable sorting on every column so
+         * getSortColumn() returns false. This keeps the widget from applying its own
+         * orderBy() and preserves the model/relation's stored sort order (it also stops
+         * RelationController from clearing the relation order when a sort column is set).
+         */
+        if ($this->sortable) {
+            foreach ($this->allColumns as $column) {
+                $column->sortable = false;
+            }
+        }
+
         return $this->allColumns;
     }
 
@@ -1020,6 +1225,10 @@ class Lists extends WidgetBase
         }
 
         if ($this->showTree) {
+            $total++;
+        }
+
+        if ($this->sortable) {
             $total++;
         }
 
@@ -1147,8 +1356,9 @@ class Lists extends WidgetBase
     {
         $value = $this->getColumnValueRaw($record, $column);
 
-        if (method_exists($this, 'eval'. studly_case($column->type) .'TypeValue')) {
-            $value = $this->{'eval'. studly_case($column->type) .'TypeValue'}($record, $column, $value);
+        $customMethod = 'eval'. studly_case($column->type) .'TypeValue';
+        if ($this->methodExists($customMethod)) {
+            $value = $this->{$customMethod}($record, $column, $value);
         }
         else {
             $value = $this->evalCustomListType($column->type, $record, $column, $value);
@@ -1309,8 +1519,16 @@ class Lists extends WidgetBase
         }
 
         if ($image) {
+            // filterGetUrl() returns the value it was given when the image cannot be
+            // resolved, so the result may still be the record's raw value.
             $imageUrl = ImageResizer::filterGetUrl($image, $width, $height, $options);
-            return "<img src='$imageUrl' width='$width' height='$height' />";
+
+            return sprintf(
+                "<img src='%s' width='%s' height='%s' />",
+                e($imageUrl),
+                e($width),
+                e($height)
+            );
         }
     }
 
@@ -1435,11 +1653,12 @@ class Lists extends WidgetBase
         $options = [
             'defaultValue' => $value,
             'format' => $column->format,
-            'formatAlias' => 'dateLongMin'
+            'formatAlias' => 'dateLongMin',
+            'ignoreTimezone' => true,
         ];
 
-        if (!empty($column->config['ignoreTimezone'])) {
-            $options['ignoreTimezone'] = true;
+        if (isset($column->config['ignoreTimezone'])) {
+            $options['ignoreTimezone'] = $column->config['ignoreTimezone'];
         }
 
         return Backend::dateTime($dateTime, $options);
@@ -1654,6 +1873,22 @@ class Lists extends WidgetBase
             $this->putSession('sort', $sortOptions);
 
             return $result;
+        }
+    }
+
+    /**
+     * Sets the column and direction to sort the list by.
+     * Use the $persist flag to control whether or not the parameters are stored in the session. Defaults to true.
+     */
+    public function setSort(string $column, string $direction = 'asc', bool $persist = true)
+    {
+        $this->sortColumn = $column;
+        $this->sortDirection = $direction;
+        if ($persist) {
+            $this->putSession('sort', [
+                'column' => $this->sortColumn,
+                'direction' => $this->sortDirection,
+            ]);
         }
     }
 

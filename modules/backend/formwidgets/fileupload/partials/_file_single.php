@@ -16,8 +16,10 @@
 >
 
     <!-- Upload Button -->
+    <?php /* Core renders an icon-only button with no accessible name (WCAG 4.1.2). */ ?>
     <button type="button" class="btn btn-default upload-button">
-        <i class="icon-upload"></i>
+        <i class="<?= e($iconClass) ?>" aria-hidden="true"></i>
+        <span class="sr-only"><?= e(trans('backend::lang.fileupload.upload_file')) ?></span>
     </button>
 
     <!-- Existing file -->
@@ -39,7 +41,7 @@
                         class="upload-remove-button"
                         data-request="<?= $this->getEventHandler('onRemoveAttachment') ?>"
                         data-request-confirm="<?= e(trans('backend::lang.fileupload.remove_confirm')) ?>"
-                        data-request-data="file_id: <?= $singleFile->id ?>"
+                        data-request-data="file_id: '<?= $singleFile->id ?>'"
                         ><i class="icon-times"></i></a>
                 </div>
             </div>

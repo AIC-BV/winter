@@ -1,11 +1,12 @@
 <?php namespace Cms\Twig;
 
 use Block;
+use Cms\Classes\Controller;
 use Event;
+use System\Classes\Asset\Vite;
 use Twig\Extension\AbstractExtension as TwigExtension;
 use Twig\TwigFilter as TwigSimpleFilter;
 use Twig\TwigFunction as TwigSimpleFunction;
-use Cms\Classes\Controller;
 
 /**
  * The CMS Twig extension class implements the basic CMS Twig functions and filters.
@@ -51,6 +52,8 @@ class Extension extends TwigExtension
             new TwigSimpleFunction('content', [$this, 'contentFunction'], $options),
             new TwigSimpleFunction('component', [$this, 'componentFunction'], $options),
             new TwigSimpleFunction('placeholder', [$this, 'placeholderFunction'], ['is_safe' => ['html']]),
+            new TwigSimpleFunction('viteReactRefresh', [$this, 'viteReactRefreshFunction'], $options),
+            new TwigSimpleFunction('vite', [$this, 'viteFunction'], $options),
         ];
     }
 
@@ -125,7 +128,7 @@ class Extension extends TwigExtension
     /**
      * Renders registered assets of a given type or all types if $type not provided
      */
-    public function assetsFunction(string $type = null): ?string
+    public function assetsFunction(?string $type = null): ?string
     {
         return $this->controller->makeAssets($type);
     }
@@ -133,7 +136,7 @@ class Extension extends TwigExtension
     /**
      * Renders placeholder content, without removing the block, must be called before the placeholder tag itself
      */
-    public function placeholderFunction(string $name, string $default = null): ?string
+    public function placeholderFunction(string $name, ?string $default = null): ?string
     {
         if (($result = Block::get($name)) === null) {
             return null;
@@ -167,6 +170,22 @@ class Extension extends TwigExtension
     }
 
     /**
+     * Generates Vite tags via Laravel's Vite Object.
+     */
+    public function viteFunction(array $entrypoints, string $package, ?string $buildDirectory = null): \Illuminate\Support\HtmlString
+    {
+        return Vite::tags($entrypoints, $package, $buildDirectory);
+    }
+
+    /**
+     * Generates Vite React Refresh tags via Laravel's Vite Object.
+     */
+    public function viteReactRefreshFunction(string $package, ?string $buildDirectory = null): ?\Illuminate\Support\HtmlString
+    {
+        return Vite::reactRefreshTag($package, $buildDirectory);
+    }
+
+    /**
      * Opens a layout block.
      */
     public function startBlock(string $name): void
@@ -177,7 +196,7 @@ class Extension extends TwigExtension
     /**
      * Returns a layout block contents (or null if it doesn't exist) and removes the block.
      */
-    public function displayBlock(string $name, string $default = null): ?string
+    public function displayBlock(string $name, ?string $default = null): ?string
     {
         if (($result = Block::placeholder($name)) === null) {
             return $default;
