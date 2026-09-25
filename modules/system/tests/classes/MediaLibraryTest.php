@@ -152,25 +152,48 @@ class MediaLibraryTest extends TestCase
         $this->assertEquals(['dimensions' => ['width' => 310, 'height' => 310]], $instance->getMetadata('/winter.png'));
     }
 
-    public function testGetMetadataReadsTheWholeJpegWhenItsHeaderIsLarge()
+    public function testGetMetadataReadsFurtherIntoAJpegWhenItsHeaderIsLarge()
+    {
+        // Two APP1 segments put the dimensions beyond the first 64KB
+        $contents = $this->makePaddedJpeg(2);
+
+        $disk = $this->createMock(FilesystemAdapter::class);
+        $disk->method('readStream')->willReturnCallback(fn () => $this->makeStream($contents));
+        $disk->expects($this->never())->method('get');
+        $disk->expects($this->never())->method('path');
+
+        $instance = MediaLibrary::instance();
+        $this->setProtectedProperty($instance, 'storageDisk', $disk);
+
+        $this->assertEquals(['dimensions' => ['width' => 40, 'height' => 30]], $instance->getMetadata('/large-header.jpg'));
+    }
+
+    public function testGetMetadataGivesUpOnAJpegWhoseDimensionsSitBeyondOneMegabyte()
+    {
+        // Seventeen APP1 segments put the dimensions beyond the first 1MB
+        $contents = $this->makePaddedJpeg(17);
+        $this->assertNotFalse(getimagesizefromstring($contents));
+
+        $disk = $this->createMock(FilesystemAdapter::class);
+        $disk->method('readStream')->willReturnCallback(fn () => $this->makeStream($contents));
+        $disk->expects($this->never())->method('get');
+
+        $instance = MediaLibrary::instance();
+        $this->setProtectedProperty($instance, 'storageDisk', $disk);
+
+        $this->assertEquals([], $instance->getMetadata('/huge-header.jpg'));
+    }
+
+    protected function makePaddedJpeg(int $segments): string
     {
         $image = imagecreatetruecolor(40, 30);
         ob_start();
         imagejpeg($image);
         $jpeg = ob_get_clean();
 
-        // Pad the JPEG with two APP1 segments so the dimensions sit beyond the first 64KB
-        $segment = "\xFF\xE1" . pack('n', 40002) . str_repeat("\0", 40000);
-        $contents = substr($jpeg, 0, 2) . $segment . $segment . substr($jpeg, 2);
+        $segment = "\xFF\xE1" . pack('n', 65535) . str_repeat("\0", 65533);
 
-        $disk = $this->createMock(FilesystemAdapter::class);
-        $disk->method('readStream')->willReturnCallback(fn () => $this->makeStream($contents));
-        $disk->expects($this->once())->method('get')->willReturn($contents);
-
-        $instance = MediaLibrary::instance();
-        $this->setProtectedProperty($instance, 'storageDisk', $disk);
-
-        $this->assertEquals(['dimensions' => ['width' => 40, 'height' => 30]], $instance->getMetadata('/large-header.jpg'));
+        return substr($jpeg, 0, 2) . str_repeat($segment, $segments) . substr($jpeg, 2);
     }
 
     protected function makeStream(string $contents)

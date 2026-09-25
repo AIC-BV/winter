@@ -674,34 +674,35 @@ class MediaLibrary
 
     /**
      * Returns the width and height of an image on the storage disk.
-     * Only the start of the file is read when that holds the dimensions,
-     * which keeps this cheap on remote disks.
+     * Only the start of the file is read, which keeps this cheap on remote disks.
      * @param string $fullPath Specifies the file path relative to the storage disk root.
      * @return array|null Returns ['width' => int, 'height' => int] or NULL if they can't be determined.
      */
     protected function getImageDimensions($fullPath)
     {
-        $disk = $this->getStorageDisk();
-        $headerLength = 65536;
+        $chunkLength = 65536;
+        $maxLength = 1048576;
 
-        $stream = $disk->readStream($fullPath);
+        $stream = $this->getStorageDisk()->readStream($fullPath);
         if (!$stream) {
             return null;
         }
 
-        $header = stream_get_contents($stream, $headerLength);
-        fclose($stream);
-
-        if (!$header) {
-            return null;
-        }
-
-        $size = @getimagesizefromstring($header);
+        $data = '';
+        $size = false;
 
         // Some JPEGs store large EXIF or ICC blocks before the dimensions
-        if (!$size && strlen($header) === $headerLength && str_starts_with($header, "\xFF\xD8")) {
-            $size = @getimagesizefromstring($disk->get($fullPath));
-        }
+        do {
+            $chunk = stream_get_contents($stream, $chunkLength);
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+
+            $data .= $chunk;
+            $size = @getimagesizefromstring($data);
+        } while (!$size && strlen($data) < $maxLength && str_starts_with($data, "\xFF\xD8"));
+
+        fclose($stream);
 
         if (!$size) {
             return null;
