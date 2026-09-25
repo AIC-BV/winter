@@ -322,6 +322,26 @@ class MediaLibrary
     }
 
     /**
+     * Returns metadata that is too expensive to gather while listing a folder,
+     * such as the dimensions of an image.
+     * @param string $path Specifies the file path relative the the Library root.
+     * @return array Returns the metadata, e.g. ['dimensions' => ['width' => 800, 'height' => 600]]
+     */
+    public function getMetadata($path)
+    {
+        $path = self::validatePath($path);
+        $item = new MediaLibraryItem($path, null, null, MediaLibraryItem::TYPE_FILE, null);
+
+        if ($item->getFileType() !== MediaLibraryItem::FILE_TYPE_IMAGE) {
+            return [];
+        }
+
+        $dimensions = $this->getImageDimensions($this->getMediaPath($path));
+
+        return $dimensions ? ['dimensions' => $dimensions] : [];
+    }
+
+    /**
      * Puts a file to the library.
      * @param string $path Specifies the file path relative the the Library root.
      * @param string $contents Specifies the file contents.
@@ -650,6 +670,47 @@ class MediaLibrary
         $publicUrl = $this->getPathUrl($relativePath);
 
         return new MediaLibraryItem($relativePath, $size, $lastModified, $itemType, $publicUrl);
+    }
+
+    /**
+     * Returns the width and height of an image on the storage disk.
+     * Only the start of the file is read when that holds the dimensions,
+     * which keeps this cheap on remote disks.
+     * @param string $fullPath Specifies the file path relative to the storage disk root.
+     * @return array|null Returns ['width' => int, 'height' => int] or NULL if they can't be determined.
+     */
+    protected function getImageDimensions($fullPath)
+    {
+        $disk = $this->getStorageDisk();
+        $headerLength = 65536;
+
+        $stream = $disk->readStream($fullPath);
+        if (!$stream) {
+            return null;
+        }
+
+        $header = stream_get_contents($stream, $headerLength);
+        fclose($stream);
+
+        if (!$header) {
+            return null;
+        }
+
+        $size = @getimagesizefromstring($header);
+
+        // Some JPEGs store large EXIF or ICC blocks before the dimensions
+        if (!$size && strlen($header) === $headerLength && str_starts_with($header, "\xFF\xD8")) {
+            $size = @getimagesizefromstring($disk->get($fullPath));
+        }
+
+        if (!$size) {
+            return null;
+        }
+
+        return [
+            'width' => $size[0],
+            'height' => $size[1],
+        ];
     }
 
     /**

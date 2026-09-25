@@ -126,6 +126,62 @@ class MediaLibraryTest extends TestCase
         $this->assertEquals(['/', '/dir', '/dir/sub', '/hidden but not really', '/name'], $instance->listAllDirectories(['/exclude']));
     }
 
+    public function testGetMetadata()
+    {
+        $this->setUpStorage();
+        $this->copyMedia();
+
+        $library = MediaLibrary::instance();
+
+        $this->assertEquals(['dimensions' => ['width' => 310, 'height' => 310]], $library->getMetadata('/winter.png'));
+        $this->assertEquals([], $library->getMetadata('/text.txt'));
+    }
+
+    public function testGetMetadataOnlyReadsTheStartOfTheFile()
+    {
+        $contents = file_get_contents(base_path('modules/system/tests/fixtures/media/winter.png'));
+
+        $disk = $this->createMock(FilesystemAdapter::class);
+        $disk->method('readStream')->willReturnCallback(fn () => $this->makeStream($contents));
+        $disk->expects($this->never())->method('get');
+        $disk->expects($this->never())->method('path');
+
+        $instance = MediaLibrary::instance();
+        $this->setProtectedProperty($instance, 'storageDisk', $disk);
+
+        $this->assertEquals(['dimensions' => ['width' => 310, 'height' => 310]], $instance->getMetadata('/winter.png'));
+    }
+
+    public function testGetMetadataReadsTheWholeJpegWhenItsHeaderIsLarge()
+    {
+        $image = imagecreatetruecolor(40, 30);
+        ob_start();
+        imagejpeg($image);
+        $jpeg = ob_get_clean();
+
+        // Pad the JPEG with two APP1 segments so the dimensions sit beyond the first 64KB
+        $segment = "\xFF\xE1" . pack('n', 40002) . str_repeat("\0", 40000);
+        $contents = substr($jpeg, 0, 2) . $segment . $segment . substr($jpeg, 2);
+
+        $disk = $this->createMock(FilesystemAdapter::class);
+        $disk->method('readStream')->willReturnCallback(fn () => $this->makeStream($contents));
+        $disk->expects($this->once())->method('get')->willReturn($contents);
+
+        $instance = MediaLibrary::instance();
+        $this->setProtectedProperty($instance, 'storageDisk', $disk);
+
+        $this->assertEquals(['dimensions' => ['width' => 40, 'height' => 30]], $instance->getMetadata('/large-header.jpg'));
+    }
+
+    protected function makeStream(string $contents)
+    {
+        $stream = fopen('php://memory', 'r+');
+        fwrite($stream, $contents);
+        rewind($stream);
+
+        return $stream;
+    }
+
     protected function setUpStorage()
     {
         $this->app->useStoragePath(base_path('storage/temp'));
